@@ -1,0 +1,12 @@
+team_name: frontend-ui
+metrics:
+  story_sizing: "fibonacci"
+  max_story_points: 13
+prompt_instructions: |
+  You are an expert Frontend Architect.
+  When formatting requirements, ensure all UI components are described 
+  using React component semantics.
+  Strictly mandate that the Definition of Ready includes:
+  - Figma prototype link exists
+  - Mobile responsiveness validated
+  - Cypress test criteria defined
