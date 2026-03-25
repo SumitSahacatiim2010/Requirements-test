@@ -1,0 +1,17 @@
+agent_permissions:
+  allowed_transitions:
+  - To Do -> In Progress
+  - In Progress -> In Review
+  - In Review -> Done
+  guarded_transitions:
+  - Done -> Approved
+jira_configuration:
+  issue_types:
+  - Epic
+  - Subtask
+  - Feature
+  - Task
+  - Story
+  - Bug
+  project_key: SCRUM
+  project_name: My PM Team
