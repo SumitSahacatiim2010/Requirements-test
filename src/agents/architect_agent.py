@@ -19,7 +19,7 @@ def main():
     
     print("State successfully rehydrated. Appending non-functional requirements to Jira stories...")
     
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
     # Perform architect evaluations
     
     print("Architect evaluation complete. Pushing payload to Jira via MCP...")

@@ -12,7 +12,7 @@ class AgentState(TypedDict):
 
 def pm_node(state: AgentState):
     print("Executing Product Manager Node...")
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
     
     prompt = f"Extract Epics and user stories from the following PRD:\n{state['prd_text']}"
     response = llm.invoke(prompt)
