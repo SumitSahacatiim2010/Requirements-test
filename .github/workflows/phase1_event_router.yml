@@ -1,0 +1,29 @@
+name: "Phase 1: Event Router"
+
+on:
+  repository_dispatch:
+    types: [jira_issue_transitioned, jira_comment_added]
+
+concurrency:
+  group: ${{ github.event.client_payload.issue_key }}
+  cancel-in-progress: false
+
+jobs:
+  route-event:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Parse and Route Jira Event
+        env:
+          ISSUE_KEY: ${{ github.event.client_payload.issue_key }}
+          STATUS: ${{ github.event.client_payload.status }}
+          ASSIGNEE: ${{ github.event.client_payload.assignee }}
+        run: |
+          echo "Received Jira Event via Webhook"
+          echo "Routing issue ${ISSUE_KEY} (Status: ${STATUS})"
+          # In a full implementation, script execution would go here to sync specific metadata.
+          # python src/agents/sync_agent.py --issue ${ISSUE_KEY} --status ${STATUS}

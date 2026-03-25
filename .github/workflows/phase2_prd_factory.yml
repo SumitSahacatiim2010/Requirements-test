@@ -1,0 +1,54 @@
+name: "Phase 2: PRD Factory & HITL"
+
+on:
+  pull_request:
+    paths:
+      - 'prds/**/*.md'
+  issue_comment:
+    types: [created]
+
+jobs:
+  generate_backlog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run PM Agent (LangGraph)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.APP_PRIVATE_KEY || secrets.GITHUB_TOKEN }}
+        run: |
+          python src/agents/pm_agent.py --pr ${PR_NUMBER}
+
+  resume_langgraph_execution:
+    if: >
+      github.event_name == 'issue_comment' &&
+      startsWith(github.event.comment.body, '/approve')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent-state-checkpoints
+      - name: Set up Python
+        uses: actions/setup-python@v5
+      - name: Resume Agent Execution
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          python src/agents/architect_agent.py --resume ${ISSUE_NUMBER}
