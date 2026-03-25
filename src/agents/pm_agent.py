@@ -1,54 +1,58 @@
-import argparse
+import os
 import sys
+import argparse
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.graph import StateGraph, END
-from typing import TypedDict, Annotated, List
-import operator
 
-class AgentState(TypedDict):
-    prd_text: str
-    epics: List[str]
-    stories: List[str]
-
-def pm_node(state: AgentState):
-    print("Executing Product Manager Node...")
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
-    
-    prompt = f"Extract Epics and user stories from the following PRD:\n{state['prd_text']}"
-    response = llm.invoke(prompt)
-    
-    # Mock processing
-    new_stories = ["As a user, I want X so that Y", "As a admin, I want A so that B"]
-    return {"epics": ["Core Authentication"], "stories": new_stories}
-
-def build_graph():
-    builder = StateGraph(AgentState)
-    builder.add_node("pm", pm_node)
-    builder.set_entry_point("pm")
-    builder.add_edge("pm", END)
-    return builder.compile()
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from tools.github_client import get_pr_file_content, create_issue
+except ImportError:
+    pass
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pr", help="Pull request number containing the PRD")
     args = parser.parse_args()
 
-    if not args.pr:
-        print("Required --pr argument")
+    pr_number = args.pr
+    repo = os.environ.get("GITHUB_REPOSITORY", "SumitSahacatiim2010/Requirements-test")
+    token = os.environ.get("GITHUB_TOKEN")
+    
+    if not pr_number or not token:
+        print("Missing PR number or GITHUB_TOKEN in environment variables.")
         sys.exit(1)
 
-    print(f"Starting PM Agent for PR #{args.pr} using Google Gemini API")
-    graph = build_graph()
+    print(f"Fetching markdown files for PR #{pr_number} from {repo}...")
+    prd_text = get_pr_file_content(repo, pr_number, token)
     
-    # Example execution (assuming prd text fetched from PyGithub)
-    initial_state = {"prd_text": "# PRD\nWe need a login page.", "epics": [], "stories": []}
+    if not prd_text:
+        print("No markdown PRD files found in PR.")
+        sys.exit(1)
+        
+    print(f"Successfully fetched PRD text ({len(prd_text)} chars). Executing Gemini Product Manager Node...")
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
     
-    # In reality, checkpoint saver would be passed to graph.invoke(..., config={"configurable": {...}})
-    result = graph.invoke(initial_state)
-    print("Agent output generated.")
+    prompt = f"""You are an Expert Agile Product Manager. Read the following Product Requirements Document (PRD) and break it down into a highly structured backlog.
+Please output:
+1. A list of defining **Epics**.
+2. Granular **User Stories** (format: As a [role], I want [action] so that [benefit]).
+3. Detailed Acceptance Criteria for each story.
+
+Format your output as a clean Markdown document. Do NOT output anything other than the markdown backlog itself.
+
+PRD TEXT:
+{prd_text}
+"""
+    response = llm.invoke(prompt)
+    backlog_markdown = response.content
     
-    # Here the script opens a GitHub issue titled "Draft Backlog Review..."
-    # using src/tools/github_client.py 
+    print("Agent output successfully generated. Creating GitHub Issue for HITL Approval...")
+    
+    issue_body = f"## Draft Backlog for PR #{pr_number}\n\n" + backlog_markdown + "\n\n---\n*Comment `/approve` to sync these changes to Jira.*"
+    
+    issue = create_issue(repo, f"Draft Backlog Review: PR #{pr_number}", issue_body, token)
+    
+    print(f"Successfully created Draft Backlog Issue: {issue.get('html_url')}")
 
 if __name__ == "__main__":
     main()
