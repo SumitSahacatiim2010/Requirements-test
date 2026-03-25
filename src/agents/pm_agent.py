@@ -114,15 +114,18 @@ def main():
         f"- Comment **`/approve`** to push these stories to Jira\n"
         f"- Comment **`/revise [feedback]`** to request changes\n"
     )
-    issue = create_issue(
-        repo,
-        f"📋 Draft Backlog Review: PR #{pr_number}",
-        issue_body,
-        token,
-        labels=["agent-generated", "needs-review"]
-    )
-    issue_number = issue["number"]
-    print(f"[PM Agent] Created Issue #{issue_number}: {issue['html_url']}")
+    try:
+        issue = create_issue(
+            repo,
+            f"Draft Backlog Review: PR #{pr_number}",
+            issue_body,
+            token
+        )
+        issue_number = issue["number"]
+        print(f"[PM Agent] Created Issue #{issue_number}: {issue['html_url']}")
+    except Exception as e:
+        print(f"[PM Agent] ERROR creating GitHub Issue: {e}")
+        sys.exit(1)
 
     # 5. Save checkpoint state for /approve resumption
     state = {
