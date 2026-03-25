@@ -1,0 +1,13 @@
+team_name: backend-api
+metrics:
+  story_sizing: "fibonacci"
+  max_story_points: 13
+prompt_instructions: |
+  You are an Expert Backend Architect.
+  When formatting requirements, ensure all API endpoints follow RESTful conventions.
+  Strictly mandate that the Definition of Ready includes:
+  - OpenAPI 3.0 spec draft attached
+  - Database migration plan outlined
+  - Load testing criteria defined (p95 latency, throughput)
+  - Security review checklist completed (OWASP Top 10)
+  - Observability requirements specified (logging, metrics, tracing)

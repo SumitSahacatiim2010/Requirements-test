@@ -1,58 +1,140 @@
 import os
 import sys
+import json
 import argparse
+import yaml
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-try:
-    from tools.github_client import get_pr_file_content, create_issue
-except ImportError:
-    pass
+from tools.github_client import get_pr_file_content, create_issue
+from state.checkpoint_manager import save_checkpoint
+
+
+def load_team_config():
+    """Load team prompt configuration if available."""
+    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                              ".github", "agent-templates")
+    configs = []
+    if os.path.exists(config_dir):
+        for f in os.listdir(config_dir):
+            if f.endswith(".yaml") or f.endswith(".yml"):
+                with open(os.path.join(config_dir, f)) as fh:
+                    configs.append(yaml.safe_load(fh))
+    return configs
+
+
+def load_project_policy():
+    """Load the Jira project policy for context."""
+    policy_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                               "project-policy.yaml")
+    if os.path.exists(policy_path):
+        with open(policy_path) as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+def run_pm_agent(prd_text, team_configs, project_policy):
+    """Use Gemini to break a PRD into Epics, Stories, and Acceptance Criteria."""
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
+
+    team_context = ""
+    for cfg in team_configs:
+        if cfg.get("prompt_instructions"):
+            team_context += f"\n\nTeam '{cfg.get('team_name', 'unknown')}' guidelines:\n{cfg['prompt_instructions']}"
+
+    policy_context = ""
+    if project_policy:
+        jira_cfg = project_policy.get("jira_configuration", {})
+        issue_types = jira_cfg.get("issue_types", [])
+        policy_context = f"\n\nAvailable Jira issue types: {', '.join(issue_types)}"
+
+    prompt = f"""You are an Expert Agile Product Manager. Break the following PRD into a structured backlog.
+
+OUTPUT FORMAT (strict markdown):
+## Epics
+For each epic, provide a title and short description.
+
+## User Stories
+For each story, provide:
+- **Story Title**
+- **As a** [role], **I want** [action] **so that** [benefit]
+- **Acceptance Criteria** (Given/When/Then format)
+- **Story Points** (fibonacci: 1,2,3,5,8,13)
+- **Priority** (Critical, High, Medium, Low)
+
+{policy_context}
+{team_context}
+
+---
+PRD TEXT:
+{prd_text}
+"""
+    response = llm.invoke(prompt)
+    return response.content
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pr", help="Pull request number containing the PRD")
+    parser.add_argument("--pr", required=True, help="Pull request number containing the PRD")
     args = parser.parse_args()
 
     pr_number = args.pr
     repo = os.environ.get("GITHUB_REPOSITORY", "SumitSahacatiim2010/Requirements-test")
     token = os.environ.get("GITHUB_TOKEN")
-    
-    if not pr_number or not token:
-        print("Missing PR number or GITHUB_TOKEN in environment variables.")
+
+    if not token:
+        print("Error: GITHUB_TOKEN not set")
         sys.exit(1)
 
-    print(f"Fetching markdown files for PR #{pr_number} from {repo}...")
+    # 1. Fetch PRD content from the PR
+    print(f"[PM Agent] Fetching PRD from PR #{pr_number}...")
     prd_text = get_pr_file_content(repo, pr_number, token)
-    
     if not prd_text:
-        print("No markdown PRD files found in PR.")
+        print("[PM Agent] No markdown PRD files found in PR. Exiting.")
         sys.exit(1)
-        
-    print(f"Successfully fetched PRD text ({len(prd_text)} chars). Executing Gemini Product Manager Node...")
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
-    
-    prompt = f"""You are an Expert Agile Product Manager. Read the following Product Requirements Document (PRD) and break it down into a highly structured backlog.
-Please output:
-1. A list of defining **Epics**.
-2. Granular **User Stories** (format: As a [role], I want [action] so that [benefit]).
-3. Detailed Acceptance Criteria for each story.
+    print(f"[PM Agent] Fetched {len(prd_text)} chars of PRD text.")
 
-Format your output as a clean Markdown document. Do NOT output anything other than the markdown backlog itself.
+    # 2. Load configurations
+    team_configs = load_team_config()
+    project_policy = load_project_policy()
+    print(f"[PM Agent] Loaded {len(team_configs)} team config(s), policy: {'yes' if project_policy else 'no'}")
 
-PRD TEXT:
-{prd_text}
-"""
-    response = llm.invoke(prompt)
-    backlog_markdown = response.content
-    
-    print("Agent output successfully generated. Creating GitHub Issue for HITL Approval...")
-    
-    issue_body = f"## Draft Backlog for PR #{pr_number}\n\n" + backlog_markdown + "\n\n---\n*Comment `/approve` to sync these changes to Jira.*"
-    
-    issue = create_issue(repo, f"Draft Backlog Review: PR #{pr_number}", issue_body, token)
-    
-    print(f"Successfully created Draft Backlog Issue: {issue.get('html_url')}")
+    # 3. Run Gemini PM Agent
+    print("[PM Agent] Invoking Gemini 2.0 Flash...")
+    backlog_markdown = run_pm_agent(prd_text, team_configs, project_policy)
+    print("[PM Agent] Backlog generated successfully.")
+
+    # 4. Create GitHub Issue for HITL review
+    issue_body = (
+        f"## 📋 Draft Backlog for PR #{pr_number}\n\n"
+        f"_Generated by PM Agent using Google Gemini_\n\n"
+        f"{backlog_markdown}\n\n"
+        f"---\n"
+        f"### ✅ Actions\n"
+        f"- Comment **`/approve`** to push these stories to Jira\n"
+        f"- Comment **`/revise [feedback]`** to request changes\n"
+    )
+    issue = create_issue(
+        repo,
+        f"📋 Draft Backlog Review: PR #{pr_number}",
+        issue_body,
+        token,
+        labels=["agent-generated", "needs-review"]
+    )
+    issue_number = issue["number"]
+    print(f"[PM Agent] Created Issue #{issue_number}: {issue['html_url']}")
+
+    # 5. Save checkpoint state for /approve resumption
+    state = {
+        "pr_number": pr_number,
+        "issue_number": issue_number,
+        "prd_text": prd_text,
+        "backlog_markdown": backlog_markdown,
+        "status": "awaiting_approval",
+    }
+    save_checkpoint(repo, token, issue_number, state)
+    print(f"[PM Agent] Checkpoint saved. Waiting for /approve on Issue #{issue_number}.")
+
 
 if __name__ == "__main__":
     main()

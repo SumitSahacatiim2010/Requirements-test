@@ -5,25 +5,53 @@ on:
     types: [jira_issue_transitioned, jira_comment_added]
 
 concurrency:
-  group: ${{ github.event.client_payload.issue_key }}
+  group: jira-event-${{ github.event.client_payload.issue_key }}
   cancel-in-progress: false
 
 jobs:
   route-event:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      issues: write
+      pull-requests: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Parse and Route Jira Event
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Route and Process Jira Event
         env:
+          JIRA_SERVER_URL: ${{ secrets.JIRA_SERVER_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           ISSUE_KEY: ${{ github.event.client_payload.issue_key }}
           STATUS: ${{ github.event.client_payload.status }}
-          ASSIGNEE: ${{ github.event.client_payload.assignee }}
+          SUMMARY: ${{ github.event.client_payload.summary }}
+          PROJECT_NAME: ${{ github.event.client_payload.project_name }}
         run: |
-          echo "Received Jira Event via Webhook"
-          echo "Routing issue ${ISSUE_KEY} (Status: ${STATUS})"
-          # In a full implementation, script execution would go here to sync specific metadata.
-          # python src/agents/sync_agent.py --issue ${ISSUE_KEY} --status ${STATUS}
+          echo "=== Jira Event Received ==="
+          echo "Issue: ${ISSUE_KEY}"
+          echo "Status: ${STATUS}"
+          echo "Summary: ${SUMMARY}"
+          echo "Project: ${PROJECT_NAME}"
+          echo ""
+          echo "Running sync agent for this event..."
+          python -c "
+          import sys, os
+          sys.path.insert(0, 'src')
+          from tools.jira_mcp_client import get_issue
+          issue = get_issue('${ISSUE_KEY}')
+          status = issue['fields']['status']['name']
+          print(f'Jira issue {issue[\"key\"]} confirmed at status: {status}')
+          print(f'Summary: {issue[\"fields\"][\"summary\"]}')
+          "

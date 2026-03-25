@@ -1,47 +1,28 @@
-import json
 import os
-import subprocess
-from typing import Optional, Any
-from langgraph.checkpoint.base import BaseCheckpointSaver
+import json
+import sys
 
-class GitBranchCheckpointSaver(BaseCheckpointSaver):
-    """
-    Custom checkpointer that serializes LangGraph state to an isolated Git branch.
-    As specified in the PDF, this avoids SQS/Redis by caching state directly via `git`.
-    """
-    def __init__(self, branch_name="agent-state-checkpoints", issue_id: str = "default"):
-        self.branch_name = branch_name
-        self.issue_id = issue_id
-        super().__init__()
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools.github_client import save_state_to_branch, load_state_from_branch, ensure_branch_exists
 
-    def get_tuple(self, config):
-        filename = f"issue_{self.issue_id}_state.json"
-        try:
-            # Fetches the file directly from the remote branch without switching working trees
-            result = subprocess.run(
-                ["git", "show", f"origin/{self.branch_name}:{filename}"],
-                capture_output=True, text=True, check=True
-            )
-            data = json.loads(result.stdout)
-            print(f"Rehydrated state from {filename}")
-            return None # Implementation of CheckpointTuple hydration goes here
-        except Exception:
-            return None
+STATE_BRANCH = "agent-state-checkpoints"
 
-    def put(self, config, checkpoint, metadata, new_versions):
-        filename = f"issue_{self.issue_id}_state.json"
-        
-        # In actual usage, handle comprehensive LangGraph state serialization
-        serialized = json.dumps({
-            "v": checkpoint.get("v", 1),
-            "id": checkpoint.get("id", ""),
-            "channel_values": {k: str(v) for k, v in checkpoint.get("channel_values", {}).items()}
-        }, indent=2)
 
-        print(f"Serializing LangGraph state to {filename} and committing to {self.branch_name}...")
-        # Note: A resilient implementation here should use PyGithub to commit the file
-        # via the GitHub API to avoid tricky git checkout merging conflicts in Actions runners.
-        return config
-    
-    def search(self, *args, **kwargs):
-        raise NotImplementedError
+def save_checkpoint(repo, token, issue_id, state_dict):
+    """Serialize agent state as JSON and commit it to the state branch via GitHub API."""
+    ensure_branch_exists(repo, token, STATE_BRANCH)
+    filename = f"state/issue_{issue_id}.json"
+    content = json.dumps(state_dict, indent=2, default=str)
+    save_state_to_branch(repo, token, STATE_BRANCH, filename, content)
+    print(f"Checkpoint saved for issue {issue_id}")
+
+
+def load_checkpoint(repo, token, issue_id):
+    """Load previously saved agent state from the state branch."""
+    filename = f"state/issue_{issue_id}.json"
+    data = load_state_from_branch(repo, token, STATE_BRANCH, filename)
+    if data:
+        print(f"Checkpoint loaded for issue {issue_id}")
+    else:
+        print(f"No checkpoint found for issue {issue_id}")
+    return data

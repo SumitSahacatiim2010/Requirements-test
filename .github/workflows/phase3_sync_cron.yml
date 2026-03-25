@@ -2,8 +2,13 @@ name: "Phase 3: Jira-GitHub Sync Cron"
 
 on:
   schedule:
-    - cron: '0 * * * *' # Executes at minute 0 past every hour
-  workflow_dispatch: # Allows manual trigger for testing
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      project_key:
+        description: 'Jira project key to sync'
+        required: false
+        default: 'SCRUM'
 
 jobs:
   run-sync:
@@ -15,14 +20,6 @@ jobs:
     steps:
       - name: Checkout main branch
         uses: actions/checkout@v4
-        with:
-          path: main
-
-      - name: Checkout traceability database
-        uses: actions/checkout@v4
-        with:
-          ref: traceability-store-db
-          path: db
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,22 +27,54 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        working-directory: main
         run: pip install -r requirements.txt
 
-      - name: Run Background Synchronization
-        working-directory: main
+      - name: Ensure traceability branch exists
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, 'src')
+          from tools.github_client import ensure_branch_exists
+          import os
+          ensure_branch_exists('${{ github.repository }}', os.environ['GITHUB_TOKEN'], 'traceability-store-db')
+          "
+
+      - name: Fetch existing traceability database
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "
+          import sys, json, os; sys.path.insert(0, 'src')
+          from tools.github_client import load_state_from_branch
+          data = load_state_from_branch('${{ github.repository }}', os.environ['GITHUB_TOKEN'], 'traceability-store-db', 'traceability.json')
+          if data:
+              with open('traceability.json', 'w') as f: json.dump(data, f, indent=2)
+              print('Loaded existing traceability DB')
+          else:
+              with open('traceability.json', 'w') as f: json.dump({'linkages': {}, 'last_sync': None, 'suggestions': []}, f)
+              print('Initialized new traceability DB')
+          "
+
+      - name: Run Synchronization Agent
+        env:
+          JIRA_SERVER_URL: ${{ secrets.JIRA_SERVER_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.APP_PRIVATE_KEY || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          JIRA_PROJECT_KEY: ${{ github.event.inputs.project_key || 'SCRUM' }}
         run: |
-          python src/agents/sync_agent.py --db-path ../db/traceability.json
-          
-      - name: Commit Traceability Store Updates
-        working-directory: db
+          python src/agents/sync_agent.py --db-path traceability.json --project-key ${JIRA_PROJECT_KEY}
+
+      - name: Save traceability database back to branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add traceability.json
-          git commit -m "chore: update Jira linkages [skip ci]" || echo "No changes to commit"
-          git push
+          python -c "
+          import sys, json, os; sys.path.insert(0, 'src')
+          from tools.github_client import save_state_to_branch
+          with open('traceability.json') as f: data = json.load(f)
+          save_state_to_branch('${{ github.repository }}', os.environ['GITHUB_TOKEN'], 'traceability-store-db', 'traceability.json', json.dumps(data, indent=2))
+          print('Traceability DB saved to branch')
+          "

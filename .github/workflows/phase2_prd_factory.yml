@@ -8,6 +8,7 @@ on:
     types: [created]
 
 jobs:
+  # Job 1: When a PR with a PRD is opened/updated, generate backlog
   generate_backlog:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -16,39 +17,54 @@ jobs:
       issues: write
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run PM Agent (LangGraph)
+
+      - name: Run PM Agent
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_TOKEN: ${{ secrets.APP_PRIVATE_KEY || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          python src/agents/pm_agent.py --pr ${PR_NUMBER}
+          python src/agents/pm_agent.py --pr ${{ github.event.pull_request.number }}
 
-  resume_langgraph_execution:
+  # Job 2: When someone comments /approve on the draft issue, resume and push to Jira
+  resume_and_push_to_jira:
     if: >
       github.event_name == 'issue_comment' &&
-      startsWith(github.event.comment.body, '/approve')
+      contains(github.event.comment.body, '/approve')
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent-state-checkpoints
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
-      - name: Resume Agent Execution
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resume Architect Agent & Push to Jira
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          JIRA_SERVER_URL: ${{ secrets.JIRA_SERVER_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          JIRA_PROJECT_KEY: SCRUM
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          python src/agents/architect_agent.py --resume ${ISSUE_NUMBER}
+          python src/agents/architect_agent.py --resume ${{ github.event.issue.number }}
